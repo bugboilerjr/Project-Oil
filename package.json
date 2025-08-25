@@ -1,0 +1,12 @@
+{
+  "name": "anonid",
+  "private": true,
+  "workspaces": ["issuer-vault", "relying-party"],
+  "scripts": {
+    "genkeys": "npm run genkeys -w issuer-vault",
+    "dev": "concurrently -k -n ISSUER,RP -c blue,magenta \"npm:dev -w issuer-vault\" \"npm:dev -w relying-party\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

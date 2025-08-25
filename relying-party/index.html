@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AnonID Demo (Enroll → Token → Verify)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { max-width: 900px; margin: 3rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: .25rem; }
+    .muted { opacity: .8; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: 1fr; }
+    .card { border: 1px solid #4443; border-radius: 16px; padding: 1rem 1.25rem; box-shadow: 0 6px 24px #0001; }
+    label { display: block; margin-top: .5rem; }
+    input, button, select { padding: .6rem .7rem; border-radius: 10px; border: 1px solid #4444; }
+    button { cursor: pointer; }
+    code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .row { display: flex; gap: .5rem; align-items: center; }
+    .ok { color: #2e7d32; }
+    .err { color: #c62828; }
+    .token { word-break: break-all; background: #0000000a; border: 1px solid #4443; padding: .5rem .75rem; border-radius: 8px; }
+    .small { font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>AnonID Demo</h1>
+  <p class="muted">Issuer vault mints pairwise tokens &amp; a signed assertion; RP verifies without seeing PII.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>1) Enroll</h3>
+      <label>DOB (YYYY-MM-DD)
+        <input id="dob" type="text" placeholder="2000-05-01" />
+      </label>
+      <button id="enrollBtn">Enroll</button>
+      <div id="enrollOut" class="small mono" style="margin-top:.5rem;"></div>
+    </div>
+
+    <div class="card">
+      <h3>2) Mint Token &amp; Assertion</h3>
+      <label>RP ID
+        <input id="rpId" type="text" value="com.example.shop" />
+      </label>
+      <fieldset style="border:none; padding:0; margin-top:.5rem;">
+        <legend class="muted small">Select claims to disclose</legend>
+        <label><input type="checkbox" class="claim" value="age_over_13" checked /> age_over_13</label>
+        <label><input type="checkbox" class="claim" value="age_over_16" /> age_over_16</label>
+        <label><input type="checkbox" class="claim" value="age_over_18" /> age_over_18</label>
+        <label><input type="checkbox" class="claim" value="age_over_21" /> age_over_21</label>
+      </fieldset>
+      <div class="row" style="margin-top:.5rem;">
+        <button id="tokenBtn">Request Token</button>
+      </div>
+      <div id="tokenOut" class="small" style="margin-top:.5rem;"></div>
+    </div>
+
+    <div class="card">
+      <h3>3) Verify at RP</h3>
+      <button id="verifyBtn">Verify Assertion</button>
+      <div id="verifyOut" class="small" style="margin-top:.5rem;"></div>
+    </div>
+  </div>
+
+  <script>
+    // Config
+    const ISSUER = "http://localhost:4001";
+    const RP_BASE = ""; // same origin as this page (relying-party)
+
+    let userId = null;
+    let assertion = null;
+    let networkToken = null;
+
+    function el(id){ return document.getElementById(id); }
+    function claimsSelected(){
+      return Array.from(document.querySelectorAll(".claim:checked")).map(c => c.value);
+    }
+
+    el("enrollBtn").onclick = async () => {
+      const dob = el("dob").value.trim();
+      el("enrollOut").textContent = "Enrolling…";
+      try {
+        const r = await fetch(`${ISSUER}/enroll`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dob })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "Enroll failed");
+        userId = j.user_id;
+        el("enrollOut").innerHTML = `<span class="ok">Enrolled.</span> user_id: <code>${userId}</code>`;
+      } catch (e) {
+        el("enrollOut").innerHTML = `<span class="err">Error:</span> ${e.message}`;
+      }
+    };
+
+    el("tokenBtn").onclick = async () => {
+      if (!userId) { alert("Enroll first."); return; }
+      const rp_id = el("rpId").value.trim() || "com.example.shop";
+      const claims = claimsSelected();
+      el("tokenOut").textContent = "Requesting token…";
+      try {
+        const r = await fetch(`${ISSUER}/token`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, rp_id, claims })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "Token failed");
+        assertion = j.assertion;
+        networkToken = j.network_token;
+        el("tokenOut").innerHTML = `
+          <div><strong>ppid:</strong> <span class="mono">${j.ppid}</span></div>
+          <div><strong>network_token:</strong> <span class="mono">${networkToken}</span></div>
+          <div><strong>assertion (JWT):</strong> <div class="token mono small">${assertion}</div></div>
+          <div class="muted small">exp: ${new Date(j.exp).toLocaleString()}</div>
+        `;
+      } catch (e) {
+        el("tokenOut").innerHTML = `<span class="err">Error:</span> ${e.message}`;
+      }
+    };
+
+    el("verifyBtn").onclick = async () => {
+      if (!assertion) { alert("Mint a token first."); return; }
+      el("verifyOut").textContent = "Verifying…";
+      try {
+        const r = await fetch(`/verify`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ assertion })
+        });
+        const j = await r.json();
+        if (!r.ok || !j.valid) throw new Error(j.error || "Invalid");
+        el("verifyOut").innerHTML = `
+          <div class="ok">Valid ✅</div>
+          <div><strong>sub (ppid):</strong> <span class="mono">${j.sub}</span></div>
+          <div><strong>attrs:</strong> <span class="mono">${JSON.stringify(j.attrs)}</span></div>
+          <div class="muted small">iat: ${new Date(j.iat*1000).toLocaleString()} · exp: ${new Date(j.exp*1000).toLocaleString()}</div>
+        `;
+      } catch (e) {
+        el("verifyOut").innerHTML = `<span class="err">Error:</span> ${e.message}`;
+      }
+    };
+  </script>
+</body>
+</html>
